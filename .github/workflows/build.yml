@@ -1,0 +1,72 @@
+name: Build and Push Images
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  REGISTRY: ghcr.io
+  VOTE_IMAGE_NAME: ${{ github.repository }}/vote
+  RESULT_IMAGE_NAME: ${{ github.repository }}/result
+  WORKER_IMAGE_NAME: ${{ github.repository }}/worker
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Vote image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./vote
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ env.REGISTRY }}/${{ env.VOTE_IMAGE_NAME }}:${{ github.sha }},${{ env.REGISTRY }}/${{ env.VOTE_IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Result image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./result
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ env.REGISTRY }}/${{ env.RESULT_IMAGE_NAME }}:${{ github.sha }},${{ env.REGISTRY }}/${{ env.RESULT_IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Worker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./worker
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ env.REGISTRY }}/${{ env.WORKER_IMAGE_NAME }}:${{ github.sha }},${{ env.REGISTRY }}/${{ env.WORKER_IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test the application
+        run: |
+          docker compose up -d
+          sleep 30  # Give some time for services to start
+          
+          # Basic health checks
+          curl -f http://localhost:8080 || exit 1  # Vote app
+          curl -f http://localhost:8081 || exit 1  # Result app
+          
+          docker compose down
