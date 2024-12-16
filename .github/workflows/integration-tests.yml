@@ -1,0 +1,69 @@
+# Integration Test Workflow for the Vote Service
+# This workflow runs testcontainer-based integration tests for the voting application
+
+name: Integration Tests
+
+# Only trigger on changes to the vote service
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'vote/**'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'vote/**'
+
+jobs:
+  test:
+    # Use latest Ubuntu runner provided by GitHub Actions
+    runs-on: ubuntu-latest
+    
+    # Set up required services for testing
+    services:
+      # Docker-in-Docker service required for testcontainers
+      dind:
+        image: docker:dind
+        ports:
+          - 2375:2375  # Expose Docker daemon port
+        env:
+          DOCKER_TLS_CERTDIR: ""  # Disable TLS for local development
+        options: >-
+          --privileged
+          --health-cmd "docker info"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # Step 1: Check out the repository code
+      - uses: actions/checkout@v4
+        # This provides access to the repository content
+
+      # Step 2: Set up Python environment
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'  # Use Python 3.11 for testing
+          cache: 'pip'  # Enable pip caching for faster installations
+
+      # Step 3: Install test dependencies
+      - name: Install dependencies
+        working-directory: ./vote
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
+        # Install all required packages for running tests
+
+      # Step 4: Run integration tests
+      - name: Run tests
+        working-directory: ./vote
+        env:
+          # Configure Docker host for testcontainers
+          DOCKER_HOST: tcp://localhost:2375
+          TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /var/run/docker.sock
+          # Add vote directory to Python path
+          PYTHONPATH: ${{ github.workspace }}/vote
+        run: |
+          # Run pytest with verbose output
+          pytest test_vote_service.py -v

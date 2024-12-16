@@ -1,18 +1,12 @@
-# Primary workflow for building and testing the voting application
-# This workflow uses standard GitHub-hosted runners and Docker BuildKit
-
 name: Build and Push Images
 
-# Trigger the workflow on push to main branch or when a PR is opened/updated
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
 
-# Global environment variables used throughout the workflow
 env:
-  # Define the container registry and image names
   REGISTRY: ghcr.io
   VOTE_IMAGE_NAME: ${{ github.repository }}/vote
   RESULT_IMAGE_NAME: ${{ github.repository }}/result
@@ -20,45 +14,34 @@ env:
 
 jobs:
   build:
-    # Use latest Ubuntu runner provided by GitHub Actions
     runs-on: ubuntu-latest
-    
-    # Define required permissions for the job
     permissions:
-      contents: read      # Required to checkout code
-      packages: write     # Required to push to GitHub Packages
+      contents: read
+      packages: write
 
     steps:
-      # Step 1: Check out the repository code
       - name: Checkout repository
         uses: actions/checkout@v4
-        # This step clones the repository and sets up the workspace
 
-      # Step 2: Set up Docker Buildx for multi-platform builds
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        # Buildx provides enhanced build capabilities including multi-arch builds
-
-      # Step 3: Authenticate with GitHub Container Registry
       - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-        # This allows us to push images to GitHub Container Registry
 
-      # Step 4: Build and push the Vote service image
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push Vote image
         uses: docker/build-push-action@v5
         with:
           context: ./vote
-          push: ${{ github.event_name != 'pull_request' }}  # Only push on main branch
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ env.REGISTRY }}/${{ env.VOTE_IMAGE_NAME }}:${{ github.sha }},${{ env.REGISTRY }}/${{ env.VOTE_IMAGE_NAME }}:latest
-          cache-from: type=gha  # Use GitHub Actions cache
+          cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Step 5: Build and push the Result service image
       - name: Build and push Result image
         uses: docker/build-push-action@v5
         with:
@@ -68,7 +51,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Step 6: Build and push the Worker service image
       - name: Build and push Worker image
         uses: docker/build-push-action@v5
         with:
@@ -78,18 +60,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Step 7: Test the application
       - name: Test the application
         run: |
-          # Start all services using docker-compose
           docker compose up -d
+          sleep 30  # Give some time for services to start
           
-          # Wait for services to initialize
-          sleep 30
-          
-          # Perform health checks on the services
+          # Basic health checks
           curl -f http://localhost:8080 || exit 1  # Vote app
           curl -f http://localhost:8081 || exit 1  # Result app
           
-          # Clean up containers
           docker compose down
