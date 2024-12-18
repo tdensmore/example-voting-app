@@ -2,7 +2,6 @@ import pytest
 import requests
 from testcontainers.redis import RedisContainer
 from testcontainers.core.container import DockerContainer
-from testcontainers.core.waiting_utils import wait_for_logs
 import json
 import time
 
@@ -18,16 +17,50 @@ class VoteAppContainer(DockerContainer):
     def start(self):
         """Override start to wait for the application to be ready"""
         super().start()
-        # Wait for Gunicorn to start
-        wait_for_logs(self, "Listening at: http://0.0.0.0:80")
-        return self
+        start_time = time.time()
+        timeout = 10  # 10 seconds timeout
+        
+        while time.time() - start_time < timeout:
+            logs = self.get_logs().decode('utf-8')
+            if "Listening at: http://0.0.0.0:80" in logs:
+                time.sleep(1)  # Brief pause to ensure app is ready
+                return self
+            time.sleep(0.5)  # Check every half second
+            
+        # If we get here, we timed out
+        print("Container logs:")
+        print(self.get_logs().decode('utf-8'))
+        self.stop()
+        raise TimeoutError(f"Vote app container failed to start within {timeout} seconds")
 
 @pytest.fixture(scope="function")
 def vote_app_environment():
     """Fixture that provides a complete voting app environment with Redis"""
     
-    # Start Redis container
-    with RedisContainer() as redis:
+    # Configure Docker client to use the correct socket
+    import os
+    os.environ["DOCKER_HOST"] = "unix:///var/run/docker.sock"
+    
+    # Start Redis container with timeout
+    redis = RedisContainer()
+    redis.start()
+    try:
+        # Wait for Redis to be ready with timeout
+        start_time = time.time()
+        timeout = 30  # 30 seconds timeout
+        
+        while time.time() - start_time < timeout:
+            logs = redis.get_logs().decode('utf-8')
+            if "Ready to accept connections" in logs:
+                break
+            time.sleep(0.5)  # Check every half second
+            
+        if time.time() - start_time >= timeout:
+            print("Container logs:")
+            print(redis.get_logs().decode('utf-8'))
+            redis.stop()
+            raise TimeoutError(f"Redis container failed to start within {timeout} seconds")
+        
         redis_host = redis.get_container_host_ip()
         redis_port = redis.get_exposed_port(6379)
         
@@ -53,6 +86,8 @@ def vote_app_environment():
                 "vote_app_url": vote_app_url,
                 "redis": redis
             }
+    finally:
+        redis.stop()
 
 def test_vote_submission(vote_app_environment):
     """Test that votes can be submitted and are stored in Redis"""
